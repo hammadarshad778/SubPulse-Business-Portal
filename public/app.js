@@ -8100,6 +8100,158 @@ async function fetchPayrollRuns() {
   }
 }
 
+function calculateAndRenderPayrollMetrics() {
+  const currentMonthStr = systemStatus.simulatedDate ? systemStatus.simulatedDate.substring(0, 7) : new Date().toISOString().substring(0, 7);
+  const currentYear = systemStatus.simulatedDate ? systemStatus.simulatedDate.substring(0, 4) : new Date().getFullYear().toString();
+  
+  // Filter runs by selected company
+  let filteredRuns = payrollRuns;
+  if (activePayrollCompany !== 'Consolidated') {
+    filteredRuns = payrollRuns.filter(r => r.company === activePayrollCompany);
+  }
+
+  // 1. This Month Payroll Total
+  let monthTotal = 0;
+  let processedEmployees = new Set();
+  let pendingApprovals = 0;
+  
+  filteredRuns.forEach(r => {
+    if (r.month === currentMonthStr) {
+      if (r.status === 'Approved') {
+        monthTotal += r.totalNet;
+        r.records.forEach(rec => processedEmployees.add(rec.employeeId));
+      } else if (r.status === 'Draft') {
+        pendingApprovals++;
+      }
+    } else {
+      if (r.status === 'Draft') {
+        pendingApprovals++;
+      }
+    }
+  });
+
+  // 2. YTD Payroll Cost
+  let ytdTotal = 0;
+  filteredRuns.forEach(r => {
+    if (r.status === 'Approved' && r.month.startsWith(currentYear)) {
+      ytdTotal += r.totalNet;
+    }
+  });
+
+  // Render metrics
+  document.getElementById('payroll-stat-month-total').textContent = `£${monthTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+  document.getElementById('payroll-stat-processed-count').textContent = processedEmployees.size;
+  document.getElementById('payroll-stat-pending-approvals').textContent = pendingApprovals;
+  document.getElementById('payroll-stat-ytd-total').textContent = `£${ytdTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+
+  // Organization Cost Analysis section on dashboard
+  let totalDevsNet = 0;
+  let totalITNet = 0;
+  
+  payrollRuns.forEach(r => {
+    if (r.status === 'Approved' && r.month === currentMonthStr) {
+      if (r.company === 'Pearls Developers Limited') {
+        totalDevsNet += r.totalNet;
+      } else if (r.company === 'Pearls IT') {
+        totalITNet += r.totalNet;
+      }
+    }
+  });
+
+  const combinedTotal = totalDevsNet + totalITNet;
+  const devsPct = combinedTotal > 0 ? Math.round((totalDevsNet / combinedTotal) * 100) : 0;
+  const itPct = combinedTotal > 0 ? Math.round((totalITNet / combinedTotal) * 100) : 0;
+
+  document.getElementById('payroll-pct-devs').textContent = `${devsPct}%`;
+  document.getElementById('payroll-bar-devs').style.width = `${devsPct}%`;
+  document.getElementById('payroll-details-devs').textContent = `£${totalDevsNet.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} paid this month`;
+
+  document.getElementById('payroll-pct-it').textContent = `${itPct}%`;
+  document.getElementById('payroll-bar-it').style.width = `${itPct}%`;
+  document.getElementById('payroll-details-it').textContent = `£${totalITNet.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} paid this month`;
+}
+
+function setupPayrollEventListeners() {
+  // Company Toggle
+  const companyBtns = document.querySelectorAll('.payroll-company-toggle-buttons .toggle-btn');
+  companyBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      companyBtns.forEach(b => {
+        b.classList.remove('active');
+        b.style.color = 'var(--color-text-muted)';
+      });
+      btn.classList.add('active');
+      btn.style.color = '#fff';
+      activePayrollCompany = btn.getAttribute('data-payroll-company');
+      renderPayrollSubTab();
+    });
+  });
+
+  // Sub tabs
+  const tabBtns = document.querySelectorAll('.payroll-sub-tabs .payroll-tab-btn');
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabBtns.forEach(b => {
+        b.classList.remove('active');
+        b.style.background = 'transparent';
+        b.style.color = 'var(--color-text-muted)';
+      });
+      btn.classList.add('active');
+      btn.style.background = 'rgba(255,255,255,0.06)';
+      btn.style.color = '#fff';
+      activePayrollTab = btn.getAttribute('data-payroll-tab');
+      
+      document.querySelectorAll('.payroll-panel').forEach(p => p.style.display = 'none');
+      document.getElementById(`payroll-panel-${activePayrollTab}`).style.display = 'block';
+      renderPayrollSubTab();
+    });
+  });
+
+  // Edit Salary modal handlers
+  document.getElementById('btn-close-salary-modal').addEventListener('click', closeSalaryModal);
+  document.getElementById('btn-cancel-salary-modal').addEventListener('click', closeSalaryModal);
+  document.getElementById('salary-structure-form').addEventListener('submit', handleSalarySubmit);
+
+  // Processor form handler
+  document.getElementById('payroll-run-processor-form').addEventListener('submit', handlePayrollCalculate);
+  
+  // Save run
+  document.getElementById('btn-save-payroll-run').addEventListener('click', savePayrollRun);
+
+  // Details modal handlers
+  document.getElementById('btn-close-payroll-details-modal').addEventListener('click', closePayrollDetailsModal);
+  document.getElementById('btn-payroll-export-bank').addEventListener('click', () => {
+    const runId = document.getElementById('btn-payroll-export-bank').getAttribute('data-run-id');
+    exportBankCSV(runId);
+  });
+  document.getElementById('btn-payroll-distribute-emails').addEventListener('click', () => {
+    const runId = document.getElementById('btn-payroll-distribute-emails').getAttribute('data-run-id');
+    distributePayslipEmails(runId);
+  });
+
+  // Payslip modal handlers
+  document.getElementById('btn-close-payslip-modal').addEventListener('click', closePayslipModal);
+  document.getElementById('btn-print-payslip').addEventListener('click', printPayslip);
+
+  // Reports handlers
+  const reportBtns = document.querySelectorAll('.payroll-report-toggle-btn');
+  reportBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      reportBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activePayrollReport = btn.getAttribute('data-payroll-report');
+      
+      document.querySelectorAll('.payroll-report-viewport').forEach(v => v.style.display = 'none');
+      document.getElementById(`payroll-report-view-${activePayrollReport}`).style.display = 'block';
+      renderPayrollReports();
+    });
+  });
+
+  document.getElementById('payroll-report-summary-run').addEventListener('change', renderPayrollReportSummary);
+  document.getElementById('payroll-report-payslip-emp').addEventListener('change', renderPayrollReportPayslips);
+  document.getElementById('payroll-report-tax-year').addEventListener('change', renderPayrollReportTax);
+}
+
 function renderPayrollSubTab() {
   calculateAndRenderPayrollMetrics();
   
@@ -8138,7 +8290,6 @@ function renderPayrollDashboard() {
   // Check if current month is processed for both companies
   const companies = ['Pearls Developers Limited', 'Pearls IT'];
   companies.forEach(comp => {
-    // If selected company doesn't match this comp, skip
     if (activePayrollCompany !== 'Consolidated' && activePayrollCompany !== comp) return;
     
     const hasRun = payrollRuns.some(r => r.month === currentMonthStr && r.company === comp);
@@ -8180,10 +8331,7 @@ function renderPayrollDashboard() {
     approvedRuns = approvedRuns.filter(r => r.company === activePayrollCompany);
   }
   
-  // Sort by month desc
   approvedRuns.sort((a,b) => b.month.localeCompare(a.month));
-  
-  // Take top 5
   const topRuns = approvedRuns.slice(0, 5);
   
   if (topRuns.length === 0) {
@@ -8252,13 +8400,11 @@ function renderPayrollSalary() {
 function renderPayrollRun() {
   const currentMonthStr = systemStatus.simulatedDate ? systemStatus.simulatedDate.substring(0, 7) : new Date().toISOString().substring(0, 7);
   
-  // Set default run month if empty
   const runMonthInput = document.getElementById('payroll-run-month');
   if (!runMonthInput.value) {
     runMonthInput.value = currentMonthStr;
   }
   
-  // If preview already loaded, show it, else hide preview container
   if (currentPayrollPreview) {
     showPayrollPreview();
   } else {
@@ -8274,21 +8420,18 @@ function handlePayrollCalculate(e) {
   
   if (!month || !company) return;
   
-  // Check if an approved run already exists for this company & month
   const duplicate = payrollRuns.some(r => r.month === month && r.company === company && r.status === 'Approved');
   if (duplicate) {
     showToast(`Approved payroll run already exists for ${company} for month ${month}.`, 'error');
     return;
   }
   
-  // Filter active employees for this company
   const compEmps = employees.filter(emp => emp.company === company && emp.status === 'Active');
   if (compEmps.length === 0) {
     showToast(`No active employees found for ${company}.`, 'error');
     return;
   }
   
-  // Calculate records
   let records = [];
   let totalGross = 0;
   let totalDeductions = 0;
@@ -8392,7 +8535,6 @@ function showPayrollPreview() {
 async function savePayrollRun() {
   if (!currentPayrollPreview) return;
   
-  // Disable button
   const saveBtn = document.getElementById('btn-save-payroll-run');
   saveBtn.disabled = true;
   saveBtn.textContent = 'Saving...';
@@ -8407,7 +8549,6 @@ async function savePayrollRun() {
     currentPayrollPreview = null;
     document.getElementById('payroll-preview-container').style.display = 'none';
     
-    // Switch to history tab
     await fetchPayrollRuns();
     const historyTab = document.querySelector('.payroll-tab-btn[data-payroll-tab="history"]');
     if (historyTab) historyTab.click();
@@ -8423,7 +8564,6 @@ function renderPayrollHistory() {
     filteredRuns = payrollRuns.filter(r => r.company === activePayrollCompany);
   }
   
-  // Sort runs by month desc
   filteredRuns.sort((a,b) => b.month.localeCompare(a.month));
   
   if (filteredRuns.length === 0) {
@@ -8473,7 +8613,7 @@ async function approvePayrollRun(runId) {
     if (res) {
       showToast('Payroll run approved and journaled successfully.', 'success');
       await fetchPayrollRuns();
-      await fetchJournals(); // Refresh ledger journal entries
+      await fetchJournals();
       renderPayrollSubTab();
     }
   }
@@ -8490,7 +8630,6 @@ async function deletePayrollRun(runId) {
   }
 }
 
-// Salary Structure Modal controller
 function openSalaryModal(empId) {
   const emp = employees.find(e => e.id === empId);
   if (!emp) return;
@@ -8554,13 +8693,11 @@ async function handleSalarySubmit(e) {
     showToast('Employee salary structure updated successfully.', 'success');
     closeSalaryModal();
     
-    // Refresh employee registry state
     await fetchEmployees();
     renderPayrollSalary();
   }
 }
 
-// Payroll Details Modal
 function openPayrollDetailsModal(runId) {
   const run = payrollRuns.find(r => r.id === runId);
   if (!run) return;
@@ -8599,7 +8736,6 @@ function openPayrollDetailsModal(runId) {
   document.getElementById('payroll-details-sum-deductions').textContent = `£${run.totalDeductions.toLocaleString(undefined, {minimumFractionDigits:2})}`;
   document.getElementById('payroll-details-sum-net').textContent = `£${run.totalNet.toLocaleString(undefined, {minimumFractionDigits:2})}`;
   
-  // Set data attributes on actions
   document.getElementById('btn-payroll-export-bank').setAttribute('data-run-id', runId);
   document.getElementById('btn-payroll-distribute-emails').setAttribute('data-run-id', runId);
   
@@ -8637,20 +8773,16 @@ function distributePayslipEmails(runId) {
   
   showToast('Distributing payslips to employee mailbox accounts...', 'info');
   
-  // Simulate SMTP emailing by firing toasts and pushing notification alerts
   setTimeout(() => {
     showToast(`Successfully emailed ${run.records.length} payslips to respective employee mail accounts.`, 'success');
     
-    // Add logs
     run.records.forEach(rec => {
-      // Simulate adding custom log or activity
       const logMsg = `Simulated SMTP: Sent monthly payslip for ${run.month} to ${rec.employeeName} (${rec.email})`;
       console.log(logMsg);
     });
   }, 1000);
 }
 
-// Individual Payslip print
 function openPayslipModal(runId, employeeId) {
   const run = payrollRuns.find(r => r.id === runId);
   if (!run) return;
@@ -8738,7 +8870,6 @@ function openPayslipModal(runId, employeeId) {
     `;
   }
   
-  const alTotal = rec.allowances.travel + rec.allowances.housing + rec.allowances.mobile;
   document.getElementById('payslip-summary-gross').textContent = `£${rec.grossPay.toLocaleString(undefined, {minimumFractionDigits:2})}`;
   document.getElementById('payslip-summary-deduct').textContent = `£${rec.totalDeductions.toLocaleString(undefined, {minimumFractionDigits:2})}`;
   document.getElementById('payslip-summary-net').textContent = `£${rec.netPay.toLocaleString(undefined, {minimumFractionDigits:2})}`;
@@ -8767,7 +8898,6 @@ function printPayslip() {
             padding: 40px;
             box-sizing: border-box;
           }
-          /* Custom overrides for printing */
           h3, h4, p, th, td, div, span { color: #000000 !important; }
           #payslip-printable-content { width: 100%; }
           table { width: 100%; border-collapse: collapse; margin-top: 20px; }
@@ -8793,7 +8923,6 @@ function printPayslip() {
   printWindow.document.close();
 }
 
-// Reports panels controller
 function renderPayrollReports() {
   if (activePayrollReport === 'summary') {
     renderPayrollReportSummary();
@@ -8807,7 +8936,6 @@ function renderPayrollReports() {
 }
 
 function renderPayrollReportSummary() {
-  // Update select runs
   const runSelect = document.getElementById('payroll-report-summary-run');
   const previousVal = runSelect.value;
   runSelect.innerHTML = '';
@@ -8884,7 +9012,6 @@ function renderPayrollReportPayslips() {
     return;
   }
   
-  // Find all payslip records for this employee from approved payroll runs
   const approvedRuns = payrollRuns.filter(r => r.status === 'Approved');
   let recordsFound = [];
   
@@ -8900,7 +9027,6 @@ function renderPayrollReportPayslips() {
     }
   });
   
-  // Sort by month desc
   recordsFound.sort((a,b) => b.month.localeCompare(a.month));
   
   if (recordsFound.length === 0) {
@@ -8938,7 +9064,6 @@ function renderPayrollReportTax() {
     return;
   }
   
-  // Aggregate stats per employee
   let aggregates = {};
   approvedRuns.forEach(run => {
     run.records.forEach(rec => {
@@ -8983,7 +9108,6 @@ function renderPayrollReportDept() {
   
   approvedRuns.forEach(run => {
     run.records.forEach(rec => {
-      // Find employee's department
       const emp = employees.find(e => e.id === rec.employeeId);
       const dept = emp ? emp.department : 'General';
       
@@ -9004,7 +9128,6 @@ function renderPayrollReportDept() {
       return;
     }
     
-    // Find max value to calibrate percentage widths
     const maxVal = Math.max(...entries.map(e => e[1]));
     const totalVal = entries.reduce((acc, curr) => acc + curr[1], 0);
     
